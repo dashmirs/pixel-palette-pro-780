@@ -1,4 +1,5 @@
-import { saveAs } from "file-saver";
+import FileSaver from "file-saver";
+const { saveAs } = FileSaver;
 import JSZip from "jszip";
 import jsPDF from "jspdf";
 import * as XLSX from "xlsx";
