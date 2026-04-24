@@ -1,9 +1,10 @@
-import { useCallback, useMemo, useState } from "react";
-import { Upload, FileText, Image as ImageIcon, Table2, Download, Loader2, X, CheckCircle2, AlertCircle } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { Upload, FileText, Image as ImageIcon, Table2, Download, Loader2, X, CheckCircle2, AlertCircle, Maximize2, Lock, Unlock } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
 import {
   buildOutputName,
   convertFile,
@@ -12,6 +13,7 @@ import {
   downloadBlob,
   getAvailableFormats,
   type ConversionCategory,
+  type ImageResizeOptions,
 } from "@/lib/converters";
 
 type Status = "pending" | "converting" | "done" | "error";
@@ -24,6 +26,12 @@ interface QueueItem {
   status: Status;
   result?: Blob;
   error?: string;
+  origWidth?: number;
+  origHeight?: number;
+  resizeEnabled?: boolean;
+  resizeWidth?: number;
+  resizeHeight?: number;
+  keepAspect?: boolean;
 }
 
 function categoryIcon(c: ConversionCategory) {
