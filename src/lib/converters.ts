@@ -8,7 +8,7 @@ import mammoth from "mammoth";
 export type ConversionCategory = "image" | "document" | "spreadsheet";
 
 export const IMAGE_FORMATS = ["png", "jpeg", "webp", "bmp"] as const;
-export const DOCUMENT_FORMATS = ["pdf", "txt", "html", "md"] as const;
+export const DOCUMENT_FORMATS = ["pdf", "docx", "txt", "html", "md", "rtf"] as const;
 export const SPREADSHEET_FORMATS = ["xlsx", "csv", "json", "html"] as const;
 
 export type ImageFormat = (typeof IMAGE_FORMATS)[number];
