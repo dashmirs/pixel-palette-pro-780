@@ -63,10 +63,39 @@ export function FileConverter() {
         category,
         target: formats[0],
         status: "pending",
+        keepAspect: true,
+        resizeEnabled: false,
       });
     }
     setItems((prev) => [...prev, ...next]);
   }, []);
+
+  useEffect(() => {
+    items.forEach((item) => {
+      if (item.category === "image" && item.origWidth == null) {
+        const url = URL.createObjectURL(item.file);
+        const img = new Image();
+        img.onload = () => {
+          setItems((prev) =>
+            prev.map((i) =>
+              i.id === item.id
+                ? {
+                    ...i,
+                    origWidth: img.naturalWidth,
+                    origHeight: img.naturalHeight,
+                    resizeWidth: img.naturalWidth,
+                    resizeHeight: img.naturalHeight,
+                  }
+                : i,
+            ),
+          );
+          URL.revokeObjectURL(url);
+        };
+        img.onerror = () => URL.revokeObjectURL(url);
+        img.src = url;
+      }
+    });
+  }, [items]);
 
   const onDrop = (e: React.DragEvent) => {
     e.preventDefault();
