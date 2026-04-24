@@ -106,13 +106,46 @@ export function FileConverter() {
   const updateTarget = (id: string, target: string) =>
     setItems((prev) => prev.map((i) => (i.id === id ? { ...i, target } : i)));
 
+  const updateItem = (id: string, patch: Partial<QueueItem>) =>
+    setItems((prev) => prev.map((i) => (i.id === id ? { ...i, ...patch } : i)));
+
+  const onResizeWidth = (item: QueueItem, value: number) => {
+    if (!value || value < 1) return updateItem(item.id, { resizeWidth: value });
+    if (item.keepAspect && item.origWidth && item.origHeight) {
+      const h = Math.round((value / item.origWidth) * item.origHeight);
+      updateItem(item.id, { resizeWidth: value, resizeHeight: h });
+    } else {
+      updateItem(item.id, { resizeWidth: value });
+    }
+  };
+  const onResizeHeight = (item: QueueItem, value: number) => {
+    if (!value || value < 1) return updateItem(item.id, { resizeHeight: value });
+    if (item.keepAspect && item.origWidth && item.origHeight) {
+      const w = Math.round((value / item.origHeight) * item.origWidth);
+      updateItem(item.id, { resizeHeight: value, resizeWidth: w });
+    } else {
+      updateItem(item.id, { resizeHeight: value });
+    }
+  };
+
+  const buildResizeOpts = (item: QueueItem): ImageResizeOptions | undefined => {
+    if (item.category !== "image" || !item.resizeEnabled) return undefined;
+    return {
+      width: item.resizeWidth,
+      height: item.resizeHeight,
+      keepAspectRatio: item.keepAspect,
+    };
+  };
+
   const removeItem = (id: string) =>
     setItems((prev) => prev.filter((i) => i.id !== id));
 
   const convertOne = async (item: QueueItem) => {
     setItems((prev) => prev.map((i) => (i.id === item.id ? { ...i, status: "converting" } : i)));
     try {
-      const blob = await convertFile(item.file, item.category, item.target);
+      const blob = await convertFile(item.file, item.category, item.target, {
+        resize: buildResizeOpts(item),
+      });
       setItems((prev) => prev.map((i) => (i.id === item.id ? { ...i, status: "done", result: blob } : i)));
       return blob;
     } catch (err: any) {
