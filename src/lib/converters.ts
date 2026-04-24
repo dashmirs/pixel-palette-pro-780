@@ -77,9 +77,8 @@ async function readDocumentAsText(file: File): Promise<{ text: string; html?: st
   }
   if (name.endsWith(".pdf")) {
     const pdfjs = await import("pdfjs-dist");
-    // @ts-expect-error worker import
-    const worker = await import("pdfjs-dist/build/pdf.worker.min.mjs?url");
-    pdfjs.GlobalWorkerOptions.workerSrc = worker.default;
+    const worker = await import("pdfjs-dist/build/pdf.worker.min.mjs?url" as string);
+    (pdfjs as any).GlobalWorkerOptions.workerSrc = (worker as any).default;
     const pdf = await pdfjs.getDocument({ data: await file.arrayBuffer() }).promise;
     let text = "";
     for (let p = 1; p <= pdf.numPages; p++) {
