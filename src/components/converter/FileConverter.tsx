@@ -106,13 +106,46 @@ export function FileConverter() {
   const updateTarget = (id: string, target: string) =>
     setItems((prev) => prev.map((i) => (i.id === id ? { ...i, target } : i)));
 
+  const updateItem = (id: string, patch: Partial<QueueItem>) =>
+    setItems((prev) => prev.map((i) => (i.id === id ? { ...i, ...patch } : i)));
+
+  const onResizeWidth = (item: QueueItem, value: number) => {
+    if (!value || value < 1) return updateItem(item.id, { resizeWidth: value });
+    if (item.keepAspect && item.origWidth && item.origHeight) {
+      const h = Math.round((value / item.origWidth) * item.origHeight);
+      updateItem(item.id, { resizeWidth: value, resizeHeight: h });
+    } else {
+      updateItem(item.id, { resizeWidth: value });
+    }
+  };
+  const onResizeHeight = (item: QueueItem, value: number) => {
+    if (!value || value < 1) return updateItem(item.id, { resizeHeight: value });
+    if (item.keepAspect && item.origWidth && item.origHeight) {
+      const w = Math.round((value / item.origHeight) * item.origWidth);
+      updateItem(item.id, { resizeHeight: value, resizeWidth: w });
+    } else {
+      updateItem(item.id, { resizeHeight: value });
+    }
+  };
+
+  const buildResizeOpts = (item: QueueItem): ImageResizeOptions | undefined => {
+    if (item.category !== "image" || !item.resizeEnabled) return undefined;
+    return {
+      width: item.resizeWidth,
+      height: item.resizeHeight,
+      keepAspectRatio: item.keepAspect,
+    };
+  };
+
   const removeItem = (id: string) =>
     setItems((prev) => prev.filter((i) => i.id !== id));
 
   const convertOne = async (item: QueueItem) => {
     setItems((prev) => prev.map((i) => (i.id === item.id ? { ...i, status: "converting" } : i)));
     try {
-      const blob = await convertFile(item.file, item.category, item.target);
+      const blob = await convertFile(item.file, item.category, item.target, {
+        resize: buildResizeOpts(item),
+      });
       setItems((prev) => prev.map((i) => (i.id === item.id ? { ...i, status: "done", result: blob } : i)));
       return blob;
     } catch (err: any) {
@@ -224,51 +257,130 @@ export function FileConverter() {
 
           <div className="divide-y">
             {items.map((item) => (
-              <div key={item.id} className="flex flex-wrap items-center gap-3 py-3">
-                <div className="flex min-w-0 flex-1 items-center gap-3">
-                  <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-muted text-muted-foreground">
-                    {categoryIcon(item.category)}
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <div className="truncate text-sm font-medium">{item.file.name}</div>
-                    <div className="text-xs text-muted-foreground">
-                      {formatBytes(item.file.size)} · {item.category}
+              <div key={item.id} className="py-3">
+                <div className="flex flex-wrap items-center gap-3">
+                  <div className="flex min-w-0 flex-1 items-center gap-3">
+                    <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-muted text-muted-foreground">
+                      {categoryIcon(item.category)}
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate text-sm font-medium">{item.file.name}</div>
+                      <div className="text-xs text-muted-foreground">
+                        {formatBytes(item.file.size)} · {item.category}
+                        {item.category === "image" && item.origWidth && item.origHeight && (
+                          <> · {item.origWidth}×{item.origHeight}px</>
+                        )}
+                      </div>
                     </div>
                   </div>
-                </div>
 
-                <div className="flex items-center gap-2">
-                  <span className="text-xs text-muted-foreground">to</span>
-                  <Select value={item.target} onValueChange={(v) => updateTarget(item.id, v)}>
-                    <SelectTrigger className="w-32">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {getAvailableFormats(item.category).map((f) => (
-                        <SelectItem key={f} value={f}>
-                          {f.toUpperCase()}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                <div className="flex items-center gap-2">
-                  {item.status === "converting" && <Loader2 className="h-4 w-4 animate-spin text-primary" />}
-                  {item.status === "done" && <CheckCircle2 className="h-4 w-4 text-green-600" />}
-                  {item.status === "error" && (
-                    <span title={item.error}>
-                      <AlertCircle className="h-4 w-4 text-destructive" />
-                    </span>
+                  {item.category === "image" && (
+                    <Button
+                      size="sm"
+                      variant={item.resizeEnabled ? "default" : "outline"}
+                      onClick={() => updateItem(item.id, { resizeEnabled: !item.resizeEnabled })}
+                    >
+                      <Maximize2 className="mr-1 h-3.5 w-3.5" />
+                      Resize
+                    </Button>
                   )}
-                  <Button size="sm" onClick={() => downloadOne(item)} disabled={item.status === "converting"}>
-                    <Download className="mr-1 h-3.5 w-3.5" />
-                    Download
-                  </Button>
-                  <Button size="icon" variant="ghost" onClick={() => removeItem(item.id)}>
-                    <X className="h-4 w-4" />
-                  </Button>
+
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-muted-foreground">to</span>
+                    <Select value={item.target} onValueChange={(v) => updateTarget(item.id, v)}>
+                      <SelectTrigger className="w-28">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {getAvailableFormats(item.category).map((f) => (
+                          <SelectItem key={f} value={f}>
+                            {f.toUpperCase()}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    {item.status === "converting" && <Loader2 className="h-4 w-4 animate-spin text-primary" />}
+                    {item.status === "done" && <CheckCircle2 className="h-4 w-4 text-green-600" />}
+                    {item.status === "error" && (
+                      <span title={item.error}>
+                        <AlertCircle className="h-4 w-4 text-destructive" />
+                      </span>
+                    )}
+                    <Button size="sm" onClick={() => downloadOne(item)} disabled={item.status === "converting"}>
+                      <Download className="mr-1 h-3.5 w-3.5" />
+                      Download
+                    </Button>
+                    <Button size="icon" variant="ghost" onClick={() => removeItem(item.id)}>
+                      <X className="h-4 w-4" />
+                    </Button>
+                  </div>
                 </div>
+
+                {item.category === "image" && item.resizeEnabled && (
+                  <div className="mt-3 flex flex-wrap items-end gap-3 rounded-lg border border-border bg-muted/30 p-3">
+                    <div className="flex flex-col gap-1">
+                      <label className="text-xs text-muted-foreground">Width (px)</label>
+                      <Input
+                        type="number"
+                        min={1}
+                        className="h-9 w-28"
+                        value={item.resizeWidth ?? ""}
+                        onChange={(e) => onResizeWidth(item, parseInt(e.target.value, 10))}
+                      />
+                    </div>
+                    <div className="flex flex-col gap-1">
+                      <label className="text-xs text-muted-foreground">Height (px)</label>
+                      <Input
+                        type="number"
+                        min={1}
+                        className="h-9 w-28"
+                        value={item.resizeHeight ?? ""}
+                        onChange={(e) => onResizeHeight(item, parseInt(e.target.value, 10))}
+                      />
+                    </div>
+                    <Button
+                      size="sm"
+                      variant={item.keepAspect ? "default" : "outline"}
+                      onClick={() => updateItem(item.id, { keepAspect: !item.keepAspect })}
+                    >
+                      {item.keepAspect ? <Lock className="mr-1 h-3.5 w-3.5" /> : <Unlock className="mr-1 h-3.5 w-3.5" />}
+                      {item.keepAspect ? "Locked" : "Free"}
+                    </Button>
+                    <div className="flex flex-wrap gap-1">
+                      {[25, 50, 75].map((p) => (
+                        <Button
+                          key={p}
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => {
+                            if (!item.origWidth || !item.origHeight) return;
+                            updateItem(item.id, {
+                              resizeWidth: Math.round((item.origWidth * p) / 100),
+                              resizeHeight: Math.round((item.origHeight * p) / 100),
+                            });
+                          }}
+                        >
+                          {p}%
+                        </Button>
+                      ))}
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() =>
+                          updateItem(item.id, {
+                            resizeWidth: item.origWidth,
+                            resizeHeight: item.origHeight,
+                          })
+                        }
+                      >
+                        Reset
+                      </Button>
+                    </div>
+                  </div>
+                )}
               </div>
             ))}
           </div>

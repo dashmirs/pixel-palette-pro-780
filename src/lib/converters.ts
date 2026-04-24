@@ -8,7 +8,7 @@ import mammoth from "mammoth";
 export type ConversionCategory = "image" | "document" | "spreadsheet";
 
 export const IMAGE_FORMATS = ["png", "jpeg", "webp", "bmp"] as const;
-export const DOCUMENT_FORMATS = ["pdf", "txt", "html", "md"] as const;
+export const DOCUMENT_FORMATS = ["pdf", "docx", "txt", "html", "md", "rtf"] as const;
 export const SPREADSHEET_FORMATS = ["xlsx", "csv", "json", "html"] as const;
 
 export type ImageFormat = (typeof IMAGE_FORMATS)[number];
@@ -140,6 +140,18 @@ export async function convertDocument(file: File, target: DocumentFormat): Promi
     const doc = `<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(stripExt(file.name))}</title></head><body>${body}</body></html>`;
     return new Blob([doc], { type: "text/html" });
   }
+  if (target === "rtf") {
+    return new Blob([textToRtf(text)], { type: "application/rtf" });
+  }
+  if (target === "docx") {
+    const { Document, Packer, Paragraph, TextRun } = await import("docx");
+    const paragraphs = (text || " ").split(/\n/).map(
+      (line) => new Paragraph({ children: [new TextRun(line)] })
+    );
+    const doc = new Document({ sections: [{ children: paragraphs }] });
+    const blob = await Packer.toBlob(doc);
+    return blob;
+  }
   // pdf
   const pdf = new jsPDF({ unit: "pt", format: "a4" });
   const pageWidth = pdf.internal.pageSize.getWidth();
@@ -163,6 +175,16 @@ export async function convertDocument(file: File, target: DocumentFormat): Promi
 
 function escapeHtml(s: string) {
   return s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]!));
+}
+
+function textToRtf(text: string): string {
+  const escaped = text
+    .replace(/\\/g, "\\\\")
+    .replace(/\{/g, "\\{")
+    .replace(/\}/g, "\\}")
+    .replace(/\r\n/g, "\n")
+    .replace(/\n/g, "\\par\n");
+  return `{\\rtf1\\ansi\\deff0{\\fonttbl{\\f0 Helvetica;}}\\fs22 ${escaped}}`;
 }
 
 // ---------- SPREADSHEETS ----------
