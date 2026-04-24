@@ -35,7 +35,17 @@ function stripExt(name: string) {
 }
 
 // ---------- IMAGES ----------
-export async function convertImage(file: File, target: ImageFormat): Promise<Blob> {
+export interface ImageResizeOptions {
+  width?: number;
+  height?: number;
+  keepAspectRatio?: boolean;
+}
+
+export async function convertImage(
+  file: File,
+  target: ImageFormat,
+  resize?: ImageResizeOptions
+): Promise<Blob> {
   const url = URL.createObjectURL(file);
   try {
     const img = await new Promise<HTMLImageElement>((resolve, reject) => {
@@ -44,15 +54,41 @@ export async function convertImage(file: File, target: ImageFormat): Promise<Blo
       i.onerror = reject;
       i.src = url;
     });
+
+    let outW = img.naturalWidth;
+    let outH = img.naturalHeight;
+    const ratio = img.naturalWidth / img.naturalHeight;
+    if (resize && (resize.width || resize.height)) {
+      const keep = resize.keepAspectRatio ?? true;
+      if (resize.width && resize.height && !keep) {
+        outW = resize.width;
+        outH = resize.height;
+      } else if (resize.width && resize.height && keep) {
+        // fit within both
+        outW = resize.width;
+        outH = Math.round(resize.width / ratio);
+        if (outH > resize.height) {
+          outH = resize.height;
+          outW = Math.round(resize.height * ratio);
+        }
+      } else if (resize.width) {
+        outW = resize.width;
+        outH = keep ? Math.round(resize.width / ratio) : img.naturalHeight;
+      } else if (resize.height) {
+        outH = resize.height;
+        outW = keep ? Math.round(resize.height * ratio) : img.naturalWidth;
+      }
+    }
+
     const canvas = document.createElement("canvas");
-    canvas.width = img.naturalWidth;
-    canvas.height = img.naturalHeight;
+    canvas.width = Math.max(1, outW);
+    canvas.height = Math.max(1, outH);
     const ctx = canvas.getContext("2d")!;
     if (target === "jpeg" || target === "bmp") {
       ctx.fillStyle = "#ffffff";
       ctx.fillRect(0, 0, canvas.width, canvas.height);
     }
-    ctx.drawImage(img, 0, 0);
+    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
     const mime =
       target === "png" ? "image/png" :
       target === "jpeg" ? "image/jpeg" :
@@ -152,8 +188,13 @@ export async function convertSpreadsheet(file: File, target: SpreadsheetFormat):
 }
 
 // ---------- DISPATCHER ----------
-export async function convertFile(file: File, category: ConversionCategory, target: string): Promise<Blob> {
-  if (category === "image") return convertImage(file, target as ImageFormat);
+export async function convertFile(
+  file: File,
+  category: ConversionCategory,
+  target: string,
+  options?: { resize?: ImageResizeOptions }
+): Promise<Blob> {
+  if (category === "image") return convertImage(file, target as ImageFormat, options?.resize);
   if (category === "document") return convertDocument(file, target as DocumentFormat);
   return convertSpreadsheet(file, target as SpreadsheetFormat);
 }
