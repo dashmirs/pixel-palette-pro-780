@@ -12,6 +12,7 @@ import {
   downloadAllAsZip,
   downloadBlob,
   getAvailableFormats,
+  getPreferredFormats,
   type ConversionCategory,
   type ImageResizeOptions,
 } from "@/lib/converters";
@@ -56,12 +57,12 @@ export function FileConverter() {
     for (const file of Array.from(files)) {
       const category = detectCategory(file);
       if (!category) continue;
-      const formats = getAvailableFormats(category);
+      const formats = getPreferredFormats(category, file.name);
       next.push({
         id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
         file,
         category,
-        target: formats[0],
+        target: formats.find((format) => !file.name.toLowerCase().endsWith(`.${format === "jpeg" ? "jpg" : format}`)) ?? formats[0],
         status: "pending",
         keepAspect: true,
         resizeEnabled: false,
@@ -292,7 +293,7 @@ export function FileConverter() {
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
-                        {getAvailableFormats(item.category).map((f) => (
+                        {getPreferredFormats(item.category, item.file.name).map((f) => (
                           <SelectItem key={f} value={f}>
                             {f.toUpperCase()}
                           </SelectItem>
