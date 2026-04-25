@@ -31,6 +31,37 @@ export function getAvailableFormats(category: ConversionCategory): readonly stri
   return FILE_FORMATS;
 }
 
+export function getPreferredFormats(category: ConversionCategory, sourceName: string): readonly string[] {
+  const name = sourceName.toLowerCase();
+  if (category === "image") {
+    const current = name.match(/\.([^.]+)$/)?.[1];
+    return [...IMAGE_FORMATS].sort((a, b) => {
+      if (a === current) return -1;
+      if (b === current) return 1;
+      return 0;
+    });
+  }
+
+  const sourceExt = name.match(/\.([^.]+)$/)?.[1];
+  const priority: Record<string, number> = {
+    pdf: 0,
+    docx: 1,
+    txt: 2,
+    html: 3,
+    md: 4,
+    rtf: 5,
+    xlsx: 6,
+    csv: 7,
+    json: 8,
+  };
+
+  return [...FILE_FORMATS].sort((a, b) => {
+    if (a === sourceExt) return -1;
+    if (b === sourceExt) return 1;
+    return (priority[a] ?? 999) - (priority[b] ?? 999);
+  });
+}
+
 function stripExt(name: string) {
   return name.replace(/\.[^.]+$/, "");
 }
@@ -51,6 +82,7 @@ export async function convertImage(
   try {
     const img = await new Promise<HTMLImageElement>((resolve, reject) => {
       const i = new Image();
+      i.crossOrigin = "anonymous";
       i.onload = () => resolve(i);
       i.onerror = reject;
       i.src = url;
@@ -81,6 +113,14 @@ export async function convertImage(
       }
     }
 
+    if (file.name.toLowerCase().endsWith(".svg") || file.type === "image/svg+xml") {
+      const svgText = await file.text();
+      const nextSvg = rewriteSvgSize(svgText, canvasSafeDimension(outW), canvasSafeDimension(outH));
+      if (target === "png" || target === "jpeg" || target === "webp" || target === "bmp") {
+        return rasterizeSvg(nextSvg, target, canvasSafeDimension(outW), canvasSafeDimension(outH));
+      }
+    }
+
     const canvas = document.createElement("canvas");
     canvas.width = Math.max(1, outW);
     canvas.height = Math.max(1, outH);
@@ -102,6 +142,58 @@ export async function convertImage(
   } finally {
     URL.revokeObjectURL(url);
   }
+}
+
+function canvasSafeDimension(value: number) {
+  return Math.max(1, Math.round(value || 1));
+}
+
+async function rasterizeSvg(svg: string, target: ImageFormat, width: number, height: number): Promise<Blob> {
+  const svgBlob = new Blob([svg], { type: "image/svg+xml;charset=utf-8" });
+  const url = URL.createObjectURL(svgBlob);
+  try {
+    const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const i = new Image();
+      i.onload = () => resolve(i);
+      i.onerror = reject;
+      i.src = url;
+    });
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) throw new Error("Canvas is not supported in this browser");
+    if (target === "jpeg" || target === "bmp") {
+      ctx.fillStyle = "#ffffff";
+      ctx.fillRect(0, 0, width, height);
+    }
+    ctx.drawImage(img, 0, 0, width, height);
+    const mime =
+      target === "png" ? "image/png" :
+      target === "jpeg" ? "image/jpeg" :
+      target === "webp" ? "image/webp" :
+      "image/bmp";
+    return await new Promise((resolve, reject) => {
+      canvas.toBlob((blob) => (blob ? resolve(blob) : reject(new Error("Conversion failed"))), mime, 0.95);
+    });
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
+function rewriteSvgSize(svg: string, width: number, height: number) {
+  let next = svg;
+  if (/\<svg[^>]*\bwidth=/.test(next)) {
+    next = next.replace(/\bwidth=("[^"]*"|'[^']*')/, `width="${width}"`);
+  } else {
+    next = next.replace(/<svg\b/, `<svg width="${width}"`);
+  }
+  if (/\<svg[^>]*\bheight=/.test(next)) {
+    next = next.replace(/\bheight=("[^"]*"|'[^']*')/, `height="${height}"`);
+  } else {
+    next = next.replace(/<svg\b/, `<svg height="${height}"`);
+  }
+  return next;
 }
 
 // ---------- DOCUMENTS ----------
