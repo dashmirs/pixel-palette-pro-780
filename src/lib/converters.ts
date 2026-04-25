@@ -237,7 +237,7 @@ async function createPdfFromText(text: string): Promise<Blob> {
   return pdf.output("blob");
 }
 
-export async function convertDocument(file: File, target: DocumentFormat): Promise<Blob> {
+export async function convertDocument(file: File, target: FileFormat): Promise<Blob> {
   const { text, html } = await readDocumentAsText(file);
   if (target === "txt") return new Blob([text], { type: "text/plain" });
   if (target === "md") return new Blob([text], { type: "text/markdown" });
@@ -246,37 +246,12 @@ export async function convertDocument(file: File, target: DocumentFormat): Promi
     const doc = `<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(stripExt(file.name))}</title></head><body>${body}</body></html>`;
     return new Blob([doc], { type: "text/html" });
   }
-  if (target === "rtf") {
-    return new Blob([textToRtf(text)], { type: "application/rtf" });
-  }
-  if (target === "docx") {
-    const { Document, Packer, Paragraph, TextRun } = await import("docx");
-    const paragraphs = (text || " ").split(/\n/).map(
-      (line) => new Paragraph({ children: [new TextRun(line)] })
-    );
-    const doc = new Document({ sections: [{ children: paragraphs }] });
-    const blob = await Packer.toBlob(doc);
-    return blob;
-  }
-  // pdf
-  const pdf = new jsPDF({ unit: "pt", format: "a4" });
-  const pageWidth = pdf.internal.pageSize.getWidth();
-  const pageHeight = pdf.internal.pageSize.getHeight();
-  const margin = 40;
-  const lineHeight = 14;
-  pdf.setFont("helvetica", "normal");
-  pdf.setFontSize(11);
-  const lines = pdf.splitTextToSize(text || " ", pageWidth - margin * 2);
-  let y = margin;
-  for (const line of lines) {
-    if (y + lineHeight > pageHeight - margin) {
-      pdf.addPage();
-      y = margin;
-    }
-    pdf.text(line, margin, y);
-    y += lineHeight;
-  }
-  return pdf.output("blob");
+  if (target === "rtf") return new Blob([textToRtf(text)], { type: "application/rtf" });
+  if (target === "docx") return createDocxFromText(text);
+  if (target === "pdf") return createPdfFromText(text);
+  if (target === "csv") return new Blob([rowsToCsv(textToRows(text))], { type: "text/csv" });
+  if (target === "json") return new Blob([JSON.stringify(textToRows(text).map((row) => ({ value: row[0] ?? "" })), null, 2)], { type: "application/json" });
+  return workbookToBlob(rowsToWorkbook(textToRows(text), stripExt(file.name)));
 }
 
 function escapeHtml(s: string) {
@@ -294,25 +269,17 @@ function textToRtf(text: string): string {
 }
 
 // ---------- SPREADSHEETS ----------
-export async function convertSpreadsheet(file: File, target: SpreadsheetFormat): Promise<Blob> {
-  const data = await file.arrayBuffer();
-  const wb = XLSX.read(data, { type: "array" });
-  const firstSheet = wb.Sheets[wb.SheetNames[0]];
-  if (target === "csv") {
-    const csv = XLSX.utils.sheet_to_csv(firstSheet);
-    return new Blob([csv], { type: "text/csv" });
-  }
-  if (target === "json") {
-    const json = XLSX.utils.sheet_to_json(firstSheet);
-    return new Blob([JSON.stringify(json, null, 2)], { type: "application/json" });
-  }
-  if (target === "html") {
-    const html = XLSX.utils.sheet_to_html(firstSheet);
-    return new Blob([html], { type: "text/html" });
-  }
-  // xlsx
-  const out = XLSX.write(wb, { bookType: "xlsx", type: "array" });
-  return new Blob([out], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+export async function convertSpreadsheet(file: File, target: FileFormat): Promise<Blob> {
+  const { workbook, sheetName, rows, html, text, json } = await readSpreadsheetData(file);
+  if (target === "csv") return new Blob([rowsToCsv(rows)], { type: "text/csv" });
+  if (target === "json") return new Blob([JSON.stringify(json, null, 2)], { type: "application/json" });
+  if (target === "html") return new Blob([html || rowsToHtml(stripExt(file.name), rows)], { type: "text/html" });
+  if (target === "txt") return new Blob([text], { type: "text/plain" });
+  if (target === "md") return new Blob([rowsToMarkdown(rows)], { type: "text/markdown" });
+  if (target === "rtf") return new Blob([textToRtf(text)], { type: "application/rtf" });
+  if (target === "docx") return createDocxFromText(text);
+  if (target === "pdf") return createPdfFromText(text);
+  return workbookToBlob(workbook.SheetNames.length ? workbook : rowsToWorkbook(rows, sheetName));
 }
 
 // ---------- DISPATCHER ----------
@@ -323,8 +290,8 @@ export async function convertFile(
   options?: { resize?: ImageResizeOptions }
 ): Promise<Blob> {
   if (category === "image") return convertImage(file, target as ImageFormat, options?.resize);
-  if (category === "document") return convertDocument(file, target as DocumentFormat);
-  return convertSpreadsheet(file, target as SpreadsheetFormat);
+  if (category === "document") return convertDocument(file, target as FileFormat);
+  return convertSpreadsheet(file, target as FileFormat);
 }
 
 export function downloadBlob(blob: Blob, filename: string) {
