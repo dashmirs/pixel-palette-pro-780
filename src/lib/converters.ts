@@ -115,7 +115,7 @@ async function readDocumentAsText(file: File): Promise<{ text: string; html?: st
   }
   if (name.endsWith(".pdf")) {
     const pdfjs = await import("pdfjs-dist");
-    const pdf = await pdfjs.getDocument({ data: await file.arrayBuffer(), disableWorker: true }).promise;
+    const pdf = await (pdfjs as any).getDocument({ data: await file.arrayBuffer(), disableWorker: true }).promise;
     let text = "";
     for (let p = 1; p <= pdf.numPages; p++) {
       const page = await pdf.getPage(p);
@@ -209,6 +209,32 @@ function rowsToWorkbook(rows: any[][], sheetName = "Sheet1") {
 function workbookToBlob(workbook: XLSX.WorkBook): Blob {
   const out = XLSX.write(workbook, { bookType: "xlsx", type: "array" });
   return new Blob([out], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+}
+
+function textToRows(text: string): string[][] {
+  const lines = (text || "").split(/\r?\n/);
+  return lines.length ? lines.map((line) => [line]) : [[""]];
+}
+
+async function createPdfFromText(text: string): Promise<Blob> {
+  const pdf = new jsPDF({ unit: "pt", format: "a4" });
+  const pageWidth = pdf.internal.pageSize.getWidth();
+  const pageHeight = pdf.internal.pageSize.getHeight();
+  const margin = 40;
+  const lineHeight = 14;
+  pdf.setFont("helvetica", "normal");
+  pdf.setFontSize(11);
+  const lines = pdf.splitTextToSize(text || " ", pageWidth - margin * 2);
+  let y = margin;
+  for (const line of lines) {
+    if (y + lineHeight > pageHeight - margin) {
+      pdf.addPage();
+      y = margin;
+    }
+    pdf.text(line, margin, y);
+    y += lineHeight;
+  }
+  return pdf.output("blob");
 }
 
 export async function convertDocument(file: File, target: DocumentFormat): Promise<Blob> {
