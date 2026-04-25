@@ -10,10 +10,12 @@ export type ConversionCategory = "image" | "document" | "spreadsheet";
 export const IMAGE_FORMATS = ["png", "jpeg", "webp", "bmp"] as const;
 export const DOCUMENT_FORMATS = ["pdf", "docx", "txt", "html", "md", "rtf"] as const;
 export const SPREADSHEET_FORMATS = ["xlsx", "csv", "json", "html"] as const;
+export const FILE_FORMATS = ["pdf", "docx", "txt", "html", "md", "rtf", "xlsx", "csv", "json"] as const;
 
 export type ImageFormat = (typeof IMAGE_FORMATS)[number];
 export type DocumentFormat = (typeof DOCUMENT_FORMATS)[number];
 export type SpreadsheetFormat = (typeof SPREADSHEET_FORMATS)[number];
+export type FileFormat = (typeof FILE_FORMATS)[number];
 
 export function detectCategory(file: File): ConversionCategory | null {
   const name = file.name.toLowerCase();
@@ -26,8 +28,7 @@ export function detectCategory(file: File): ConversionCategory | null {
 
 export function getAvailableFormats(category: ConversionCategory): readonly string[] {
   if (category === "image") return IMAGE_FORMATS;
-  if (category === "document") return DOCUMENT_FORMATS;
-  return SPREADSHEET_FORMATS;
+  return FILE_FORMATS;
 }
 
 function stripExt(name: string) {
@@ -114,9 +115,7 @@ async function readDocumentAsText(file: File): Promise<{ text: string; html?: st
   }
   if (name.endsWith(".pdf")) {
     const pdfjs = await import("pdfjs-dist");
-    const worker = await import("pdfjs-dist/build/pdf.worker.min.mjs?url" as string);
-    (pdfjs as any).GlobalWorkerOptions.workerSrc = (worker as any).default;
-    const pdf = await pdfjs.getDocument({ data: await file.arrayBuffer() }).promise;
+    const pdf = await (pdfjs as any).getDocument({ data: await file.arrayBuffer(), disableWorker: true }).promise;
     let text = "";
     for (let p = 1; p <= pdf.numPages; p++) {
       const page = await pdf.getPage(p);
@@ -131,28 +130,93 @@ async function readDocumentAsText(file: File): Promise<{ text: string; html?: st
   return { text };
 }
 
-export async function convertDocument(file: File, target: DocumentFormat): Promise<Blob> {
-  const { text, html } = await readDocumentAsText(file);
-  if (target === "txt") return new Blob([text], { type: "text/plain" });
-  if (target === "md") return new Blob([text], { type: "text/markdown" });
-  if (target === "html") {
-    const body = html ?? `<pre>${escapeHtml(text)}</pre>`;
-    const doc = `<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(stripExt(file.name))}</title></head><body>${body}</body></html>`;
-    return new Blob([doc], { type: "text/html" });
-  }
-  if (target === "rtf") {
-    return new Blob([textToRtf(text)], { type: "application/rtf" });
-  }
-  if (target === "docx") {
-    const { Document, Packer, Paragraph, TextRun } = await import("docx");
-    const paragraphs = (text || " ").split(/\n/).map(
-      (line) => new Paragraph({ children: [new TextRun(line)] })
-    );
-    const doc = new Document({ sections: [{ children: paragraphs }] });
-    const blob = await Packer.toBlob(doc);
-    return blob;
-  }
-  // pdf
+async function readSpreadsheetData(file: File): Promise<{
+  workbook: XLSX.WorkBook;
+  sheetName: string;
+  rows: any[][];
+  html: string;
+  text: string;
+  json: Record<string, any>[];
+}> {
+  const data = await file.arrayBuffer();
+  const workbook = XLSX.read(data, { type: "array" });
+  const sheetName = workbook.SheetNames[0];
+  const firstSheet = workbook.Sheets[sheetName];
+  const rows = XLSX.utils.sheet_to_json(firstSheet, { header: 1, defval: "" }) as any[][];
+  const html = XLSX.utils.sheet_to_html(firstSheet);
+  const text = rows.map((row) => row.map((cell) => String(cell ?? "")).join("\t")).join("\n");
+  const json = XLSX.utils.sheet_to_json(firstSheet, { defval: "" }) as Record<string, any>[];
+  return { workbook, sheetName, rows, html, text, json };
+}
+
+async function createDocxFromText(text: string): Promise<Blob> {
+  const { Document, Packer, Paragraph, TextRun } = await import("docx");
+  const lines = (text || " ").split(/\n/);
+  const paragraphs = lines.length
+    ? lines.map((line) => new Paragraph({ children: [new TextRun(line || " ")] }))
+    : [new Paragraph({ children: [new TextRun(" ")] })];
+  const doc = new Document({ sections: [{ children: paragraphs }] });
+  return Packer.toBlob(doc);
+}
+
+function rowsToCsv(rows: any[][]): string {
+  return rows
+    .map((row) =>
+      row
+        .map((cell) => {
+          const value = String(cell ?? "");
+          return /[",\n]/.test(value) ? `"${value.replace(/"/g, '""')}"` : value;
+        })
+        .join(","),
+    )
+    .join("\n");
+}
+
+function rowsToMarkdown(rows: any[][]): string {
+  if (!rows.length) return "";
+  const normalized = rows.map((row) => row.map((cell) => String(cell ?? "").replace(/\|/g, "\\|")));
+  const columnCount = Math.max(...normalized.map((row) => row.length), 1);
+  const fill = (row: string[]) => Array.from({ length: columnCount }, (_, index) => row[index] ?? "");
+  const header = fill(normalized[0]);
+  const divider = Array.from({ length: columnCount }, () => "---");
+  const body = normalized.slice(1).map(fill);
+  return [header, divider, ...body].map((row) => `| ${row.join(" | ")} |`).join("\n");
+}
+
+function rowsToHtml(title: string, rows: any[][]): string {
+  const columnCount = Math.max(...rows.map((row) => row.length), 1);
+  const header = rows[0]?.length ? rows[0] : Array.from({ length: columnCount }, (_, i) => `Column ${i + 1}`);
+  const body = rows.length > 1 ? rows.slice(1) : [];
+  const thead = `<tr>${header.map((cell) => `<th>${escapeHtml(String(cell ?? ""))}</th>`).join("")}</tr>`;
+  const tbody = body.length
+    ? body
+        .map(
+          (row) =>
+            `<tr>${Array.from({ length: columnCount }, (_, index) => `<td>${escapeHtml(String(row[index] ?? ""))}</td>`).join("")}</tr>`,
+        )
+        .join("")
+    : `<tr>${Array.from({ length: columnCount }, () => "<td></td>").join("")}</tr>`;
+  return `<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(title)}</title></head><body><table><thead>${thead}</thead><tbody>${tbody}</tbody></table></body></html>`;
+}
+
+function rowsToWorkbook(rows: any[][], sheetName = "Sheet1") {
+  const workbook = XLSX.utils.book_new();
+  const sheet = XLSX.utils.aoa_to_sheet(rows.length ? rows : [[""]]);
+  XLSX.utils.book_append_sheet(workbook, sheet, sheetName.slice(0, 31) || "Sheet1");
+  return workbook;
+}
+
+function workbookToBlob(workbook: XLSX.WorkBook): Blob {
+  const out = XLSX.write(workbook, { bookType: "xlsx", type: "array" });
+  return new Blob([out], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+}
+
+function textToRows(text: string): string[][] {
+  const lines = (text || "").split(/\r?\n/);
+  return lines.length ? lines.map((line) => [line]) : [[""]];
+}
+
+async function createPdfFromText(text: string): Promise<Blob> {
   const pdf = new jsPDF({ unit: "pt", format: "a4" });
   const pageWidth = pdf.internal.pageSize.getWidth();
   const pageHeight = pdf.internal.pageSize.getHeight();
@@ -173,6 +237,23 @@ export async function convertDocument(file: File, target: DocumentFormat): Promi
   return pdf.output("blob");
 }
 
+export async function convertDocument(file: File, target: FileFormat): Promise<Blob> {
+  const { text, html } = await readDocumentAsText(file);
+  if (target === "txt") return new Blob([text], { type: "text/plain" });
+  if (target === "md") return new Blob([text], { type: "text/markdown" });
+  if (target === "html") {
+    const body = html ?? `<pre>${escapeHtml(text)}</pre>`;
+    const doc = `<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(stripExt(file.name))}</title></head><body>${body}</body></html>`;
+    return new Blob([doc], { type: "text/html" });
+  }
+  if (target === "rtf") return new Blob([textToRtf(text)], { type: "application/rtf" });
+  if (target === "docx") return createDocxFromText(text);
+  if (target === "pdf") return createPdfFromText(text);
+  if (target === "csv") return new Blob([rowsToCsv(textToRows(text))], { type: "text/csv" });
+  if (target === "json") return new Blob([JSON.stringify(textToRows(text).map((row) => ({ value: row[0] ?? "" })), null, 2)], { type: "application/json" });
+  return workbookToBlob(rowsToWorkbook(textToRows(text), stripExt(file.name)));
+}
+
 function escapeHtml(s: string) {
   return s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]!));
 }
@@ -188,25 +269,17 @@ function textToRtf(text: string): string {
 }
 
 // ---------- SPREADSHEETS ----------
-export async function convertSpreadsheet(file: File, target: SpreadsheetFormat): Promise<Blob> {
-  const data = await file.arrayBuffer();
-  const wb = XLSX.read(data, { type: "array" });
-  const firstSheet = wb.Sheets[wb.SheetNames[0]];
-  if (target === "csv") {
-    const csv = XLSX.utils.sheet_to_csv(firstSheet);
-    return new Blob([csv], { type: "text/csv" });
-  }
-  if (target === "json") {
-    const json = XLSX.utils.sheet_to_json(firstSheet);
-    return new Blob([JSON.stringify(json, null, 2)], { type: "application/json" });
-  }
-  if (target === "html") {
-    const html = XLSX.utils.sheet_to_html(firstSheet);
-    return new Blob([html], { type: "text/html" });
-  }
-  // xlsx
-  const out = XLSX.write(wb, { bookType: "xlsx", type: "array" });
-  return new Blob([out], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+export async function convertSpreadsheet(file: File, target: FileFormat): Promise<Blob> {
+  const { workbook, sheetName, rows, html, text, json } = await readSpreadsheetData(file);
+  if (target === "csv") return new Blob([rowsToCsv(rows)], { type: "text/csv" });
+  if (target === "json") return new Blob([JSON.stringify(json, null, 2)], { type: "application/json" });
+  if (target === "html") return new Blob([html || rowsToHtml(stripExt(file.name), rows)], { type: "text/html" });
+  if (target === "txt") return new Blob([text], { type: "text/plain" });
+  if (target === "md") return new Blob([rowsToMarkdown(rows)], { type: "text/markdown" });
+  if (target === "rtf") return new Blob([textToRtf(text)], { type: "application/rtf" });
+  if (target === "docx") return createDocxFromText(text);
+  if (target === "pdf") return createPdfFromText(text);
+  return workbookToBlob(workbook.SheetNames.length ? workbook : rowsToWorkbook(rows, sheetName));
 }
 
 // ---------- DISPATCHER ----------
@@ -217,8 +290,8 @@ export async function convertFile(
   options?: { resize?: ImageResizeOptions }
 ): Promise<Blob> {
   if (category === "image") return convertImage(file, target as ImageFormat, options?.resize);
-  if (category === "document") return convertDocument(file, target as DocumentFormat);
-  return convertSpreadsheet(file, target as SpreadsheetFormat);
+  if (category === "document") return convertDocument(file, target as FileFormat);
+  return convertSpreadsheet(file, target as FileFormat);
 }
 
 export function downloadBlob(blob: Blob, filename: string) {
